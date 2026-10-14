@@ -30,8 +30,9 @@ shows the request was made), `turn` after a valid reply, `resolution_proposed`, 
 `unverified`, and `outcome` when one is recorded later with `python parley.py outcome <run> ...`.
 
 Usage:
-  python parley.py run --question "..." --thread <codex-thread-id> [--first codex|claude] [--max-turns 12]
-  python parley.py run --question @question.md --thread ... --claude-seat mailbox
+  python parley.py run --question "..."                       # fresh Codex vs fresh Claude, Claude verifier
+  python parley.py run --question @question.md --codex-seat thread --thread <id> --claude-seat mailbox
+  python parley.py run --question "..." --grok-seat api --names codex=Astra,claude=Fable
   python parley.py run --question "test" --codex-seat mock --claude-seat mock      # offline check
   python parley.py outcome runs/<stamp> --status held|failed|mixed|moot --note "what happened"
 
@@ -50,6 +51,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import sys
 import json
 import os
 import re
@@ -62,6 +64,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+
+if sys.version_info < (3, 10):
+    raise SystemExit("parley.py needs Python 3.10 or later")
 
 
 def utc() -> str:
@@ -173,8 +178,23 @@ RULES = (
 REMINDER = ('Reply with exactly one JSON object and nothing else, shaped {"message": "...", "position": "...", '
             '"accept": true or false, "resolved": "<exact resolution text>" or null}.')
 
-DISPLAY = {"codex": "Astra (OpenAI gpt-6-astra, via Codex)", "claude": "Fable (Anthropic Claude Fable 5.1)",
-           "grok": "Grok (xAI grok-4.7)"}
+DISPLAY = {"codex": "Codex (OpenAI, via the Codex CLI)", "claude": "Claude (Anthropic, via Claude Code)",
+           "grok": "Grok (xAI, via the API)"}
+
+
+def parse_names(spec: str) -> dict[str, str]:
+    """`codex=Astra,claude=Fable` -> {"codex": "Astra", "claude": "Fable"}; names may contain spaces."""
+    names = {}
+    for part in (spec or "").split(","):
+        if not part.strip():
+            continue
+        if "=" not in part:
+            raise SeatRefused(f"--names entries look like seat=Name; got {part!r}")
+        seat, name = part.split("=", 1)
+        if not seat.strip() or not name.strip():
+            raise SeatRefused(f"--names entries look like seat=Name; got {part!r}")
+        names[seat.strip()] = name.strip()
+    return names
 
 
 def render_transcript(turns: list[dict], notes: list[dict] | None = None) -> str:
@@ -193,11 +213,12 @@ def render_transcript(turns: list[dict], notes: list[dict] | None = None) -> str
 
 
 def build_prompt(name: str, others: list[str], question: str, turns: list[dict], turn_no: int, max_turns: int,
-                 notes: list[dict] | None = None, since: int | None = None) -> str:
+                 notes: list[dict] | None = None, since: int | None = None, names: dict | None = None) -> str:
     """Full prompt (rules + question + whole transcript), or, for a stateful seat that already has the
     earlier turns in its own context, only the turns after `since` (its last turn)."""
-    me = f"{name} = {DISPLAY.get(name, name)}"
-    them = "; ".join(f"{o} = {DISPLAY.get(o, o)}" for o in others)
+    shown = {**DISPLAY, **(names or {})}
+    me = f"{name} = {shown.get(name, name)}"
+    them = "; ".join(f"{o} = {shown.get(o, o)}" for o in others)
     if since is None:
         return (f"{RULES}\n\nYou are {me}. The other parties: {them}. This is turn {turn_no} of at most {max_turns}.\n\n"
                 f"QUESTION TO RESOLVE:\n{question}\n\nTRANSCRIPT SO FAR:\n{render_transcript(turns, notes)}\n\n"
@@ -298,8 +319,10 @@ class CodexFreshSeat:
 
     def reply(self, prompt: str, turn_no: int = 0) -> tuple[dict, str]:
         self.workdir.mkdir(parents=True, exist_ok=True)
-        cmd = [self.exe, "exec", "--json", "--skip-git-repo-check", "-s", "read-only", "-C", str(self.workdir),
-               "-m", self.model, "-c", 'model_reasoning_summary="detailed"', "-c", 'model_reasoning_effort="high"', "-"]
+        cmd = [self.exe, "exec", "--json", "--skip-git-repo-check", "-s", "read-only", "-C", str(self.workdir)]
+        if self.model:
+            cmd += ["-m", self.model]
+        cmd += ["-c", 'model_reasoning_summary="detailed"', "-c", 'model_reasoning_effort="high"', "-"]
         proc = run_cli(cmd, input_text=prompt, timeout=self.timeout)
         text, reasoning, _ = parse_codex_events(proc.stdout)
         if proc.returncode != 0 or not text:
@@ -375,7 +398,7 @@ class ClaudeCliSeat:
 
     def reply(self, prompt: str, turn_no: int = 0) -> tuple[dict, str]:
         self.workdir.mkdir(parents=True, exist_ok=True)
-        cmd = [self.exe, "-p", "--output-format", "json", "--model", self.model, prompt]
+        cmd = [self.exe, "-p", "--output-format", "json"] + (["--model", self.model] if self.model else []) + [prompt]
         proc = run_cli(cmd, input_text="", timeout=self.timeout, cwd=self.workdir, env=claude_env())
         if proc.returncode != 0:
             raise RuntimeError(f"claude returned exit {proc.returncode}: {proc.stderr.strip()[-300:]}")
@@ -410,7 +433,7 @@ class ClaudeResumeSeat:
 
     def reply(self, prompt: str, turn_no: int = 0) -> tuple[dict, str]:
         self.workdir.mkdir(parents=True, exist_ok=True)
-        cmd = [self.exe, "-p", "--output-format", "json", "--model", self.model]
+        cmd = [self.exe, "-p", "--output-format", "json"] + (["--model", self.model] if self.model else [])
         if self.deny_prompts:
             cmd += ["--permission-prompts", "none"]
         cmd += (["--resume", self.session_id] if self.started else ["--session-id", self.session_id]) + [prompt]
@@ -505,7 +528,8 @@ class ClaudeVerifier:
 
     def verdict(self, question: str, resolution: str) -> dict:
         self.workdir.mkdir(parents=True, exist_ok=True)
-        cmd = [self.exe, "-p", "--output-format", "json", "--model", self.model, "--tools", "", "--strict-mcp-config",
+        cmd = [self.exe, "-p", "--output-format", "json"] + (["--model", self.model] if self.model else []) + [
+               "--tools", "", "--strict-mcp-config",
                "--permission-mode", "dontAsk", "--disable-slash-commands", "--setting-sources", "",
                "--settings", '{"disableAllHooks":true}', "--no-session-persistence",
                build_verify_prompt(question, resolution)]
@@ -538,7 +562,7 @@ class CodexVerifier:
         self.workdir.mkdir(parents=True, exist_ok=True)
         cmd = [self.exe, "exec", "--json", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config",
                "--sandbox", "read-only", "-c", 'approval_policy="never"', "-c", "features.shell_tool=false",
-               "-C", str(self.workdir), "-m", self.model, "-"]
+               "-C", str(self.workdir)] + (["-m", self.model] if self.model else []) + ["-"]
         proc = run_cli(cmd, input_text=build_verify_prompt(question, resolution), timeout=self.timeout)
         text, _, _ = parse_codex_events(proc.stdout)
         if proc.returncode != 0 or not text:
@@ -593,7 +617,7 @@ def load_run(out: Path) -> tuple[list[dict], list[dict]]:
 
 def run_parley(question: str, seats: dict, order: list[str], out: Path, *, max_turns: int = 12, retries: int = 2,
                retry_delay: float = 10.0, verifier=None, resume: bool = False, config: dict | None = None,
-               quiet: bool = False) -> dict:
+               quiet: bool = False, names: dict | None = None) -> dict:
     """The house. Returns the result dict that is also written to result.json. Admission runs first;
     the run directory is only created once every seat is admitted."""
     if not question.strip():
@@ -617,7 +641,8 @@ def run_parley(question: str, seats: dict, order: list[str], out: Path, *, max_t
     ledger = (out / "transcript.jsonl").open("a", encoding="utf-8")
     if not resume:
         (out / "config.json").write_text(json.dumps({"question": question, "order": order, "max_turns": max_turns,
-                                                     "verifier": getattr(verifier, "name", None), **(config or {}),
+                                                     "verifier": getattr(verifier, "name", None), "names": names or {},
+                                                     **(config or {}),
                                                      "started": utc()}, indent=2), encoding="utf-8")
 
     def emit(kind: str, **data):
@@ -657,7 +682,7 @@ def run_parley(question: str, seats: dict, order: list[str], out: Path, *, max_t
             seat = seats[speaker]
             others = [s for s in order if s != speaker]
             since = last_spoke.get(speaker) if getattr(seat, "stateful", False) and replies_this_process[speaker] else None
-            prompt = build_prompt(speaker, others, question, turns, turn_no, max_turns, notes, since)
+            prompt = build_prompt(speaker, others, question, turns, turn_no, max_turns, notes, since, names)
             reply = None
             for attempt in range(1, retries + 2):
                 # Recorded BEFORE the request: a crash or timeout mid-turn must still show that a
@@ -800,7 +825,7 @@ def run(args: argparse.Namespace) -> int:
     config = {"thread": args.thread, "first": args.first, "codex_seat": args.codex_seat, "claude_seat": args.claude_seat,
               "grok_seat": args.grok_seat}
     result = run_parley(question, seats, order, out, max_turns=args.max_turns, retries=args.retries,
-                        verifier=verifier, resume=resume, config=config)
+                        verifier=verifier, resume=resume, config=config, names=parse_names(args.names))
     if isinstance(seats.get("claude"), ClaudeResumeSeat):
         (out / "claude_session.txt").write_text(seats["claude"].session_id + "\n", encoding="utf-8")
     return 0 if result["status"] == "resolved" else 1
@@ -814,17 +839,18 @@ def main(argv=None) -> int:
     r.add_argument("--thread", help="Codex thread id to resume for the codex seat")
     r.add_argument("--first", choices=["codex", "claude"], default="codex")
     r.add_argument("--max-turns", type=int, default=12)
-    r.add_argument("--codex-seat", choices=["thread", "mailbox", "fresh", "mock"], default="thread")
-    r.add_argument("--codex-model", default="gpt-6-astra", help="Model for the fresh codex seat")
+    r.add_argument("--codex-seat", choices=["thread", "mailbox", "fresh", "mock"], default="fresh")
+    r.add_argument("--codex-model", default="", help="Model for the fresh codex seat (default: the CLI configured model)")
     r.add_argument("--grok-seat", choices=["none", "api", "mock"], default="none",
                    help="api = xAI Grok via the public API (XAI_API_KEY), stateless per turn")
     r.add_argument("--grok-model", default="grok-4.7")
     r.add_argument("--order", default="", help="Comma-separated speaking order, e.g. codex,claude,grok")
-    r.add_argument("--claude-seat", choices=["mailbox", "cli", "resume", "mock"], default="mailbox",
+    r.add_argument("--claude-seat", choices=["mailbox", "cli", "resume", "mock"], default="cli",
                    help="cli = fresh Claude per turn; resume = one Claude Code session for the whole parley")
-    r.add_argument("--claude-model", default="opus")
+    r.add_argument("--claude-model", default="", help="Model for the Claude seats (default: the CLI configured model)")
+    r.add_argument("--names", default="", help="Display names the parties use for each other, e.g. codex=Astra,claude=Fable")
     r.add_argument("--claude-session", default="", help="Session id to resume for the resume seat (with --resume)")
-    r.add_argument("--verifier", choices=["none", "claude", "codex", "mock"], default="none",
+    r.add_argument("--verifier", choices=["none", "claude", "codex", "mock"], default="claude",
                    help="Tool-less read-only model that may veto an agreed resolution; never writes one")
     r.add_argument("--verifier-model", default="", help="Model for the verifier (default haiku / the codex model)")
     r.add_argument("--turn-timeout", type=float, default=600.0, help="Seconds for a CLI seat to answer")

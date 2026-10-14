@@ -1,5 +1,7 @@
 # Parley room
 
+[![tests](https://github.com/Mlcharle518/parley-room/actions/workflows/tests.yml/badge.svg)](https://github.com/Mlcharle518/parley-room/actions/workflows/tests.yml)
+
 A neutral space where two or more agents negotiate to a resolution. The house is `parley.py`, a plain
 stdlib Python script with no model and no opinion: it holds the shared transcript, rotates turns,
 delivers only what the other parties wrote, checks the resolution rule, and stops.
@@ -35,6 +37,10 @@ What it adds beyond "send one prompt to several models":
 | `--grok-seat api` | Grok | xAI Grok through the public API (`XAI_API_KEY`), stateless | streamed chat completion each turn |
 | `--*-seat mock` | Mock | Scripted | For testing the house |
 
+Parties address each other by seat name; `--names codex=Astra,claude=Fable` changes what each seat is called
+in the prompts. Model flags (`--codex-model`, `--claude-model`, `--grok-model`) default to each CLI's own
+configured model.
+
 Stateful seats keep their own context, so after their first turn they receive only the turns since they
 last spoke (plus any HOUSE note). Stateless seats get the rules, the question and the whole transcript
 every turn. On a resumed run every seat gets the full prompt on its first turn in that process.
@@ -55,10 +61,16 @@ verifier is refused rather than run with unknown powers. It answers `{"answers":
 
 ## Run
 
-```powershell
-cd parley-room
-python parley.py run --question "Which is the better default: fail open or fail closed?" --codex-seat fresh --claude-seat cli --verifier claude
+Needs Python 3.10 or later (standard library only) and at least two seats: the [Codex CLI](https://developers.openai.com/codex)
+and/or [Claude Code](https://code.claude.com) signed in on your PATH, and `XAI_API_KEY` for the Grok seat.
+
+```sh
+git clone https://github.com/Mlcharle518/parley-room && cd parley-room
+python parley.py run --question "Which is the better default for an unattended agent: fail open or fail closed?"
 ```
+
+That runs a fresh Codex seat against a fresh Claude seat with the Claude verifier on, and writes the run to
+`runs/<stamp>/`. Add `--grok-seat api` for a third party.
 
 `--question` takes text or `@file`. `--first` says who opens; `--order codex,claude,grok` sets a full
 rotation. The mailbox seat waits up to `--mailbox-timeout` seconds (default one hour) for each reply,
@@ -107,6 +119,15 @@ python parley.py outcome runs\<stamp> --status failed --note "falsifier observed
 
 Statuses: `held`, `failed`, `mixed`, `moot`. The ledger gets an `outcome` event next to the resolution and
 its falsifier.
+
+## Example run
+
+[`runs/llm-domain-v2/20260921T210807Z/parley.md`](runs/llm-domain-v2/20260921T210807Z/parley.md) is a real
+three-party parley from 2026-09-21: a Codex thread (gpt-6-astra), a live Claude Code session (Fable 5.1) and
+Grok 4.7, on the [question](runs/llm-domain-v2/question.md) "define what LLMs do, define Jev-class decision
+models, and name the missing element in the domain". Resolved at turn 7 on the Codex seat's text. The
+transcript shows the shape the house enforces: positions move, concessions are explicit, and the resolution is
+one agreed paragraph, not a vote. This run predates the verifier.
 
 ## Driving the mailbox seat from a Claude Code session
 

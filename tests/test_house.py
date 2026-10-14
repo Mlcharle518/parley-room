@@ -274,3 +274,24 @@ def test_run_cli_timeout_kills_grandchild(tmp_path):
     while _pid_alive(pid) and time.monotonic() < deadline:
         time.sleep(0.1)
     assert not _pid_alive(pid), "grandchild survived the timeout kill"
+
+
+# ---------------------------------------------------------------- names
+def test_parse_names():
+    assert parley.parse_names("codex=Astra, claude=Fable the Second") == {"codex": "Astra", "claude": "Fable the Second"}
+    assert parley.parse_names("") == {}
+    with pytest.raises(SeatRefused):
+        parley.parse_names("codex")
+
+
+def test_names_reach_the_prompt_and_config(tmp_path):
+    a = RecordingSeat("codex", [reply(resolved="X")])
+    b = RecordingSeat("claude", [reply(resolved="X")])
+    _, out = house(tmp_path, {"codex": a, "claude": b}, names={"codex": "Astra"})
+    assert "You are codex = Astra" in a.prompts[0]
+    assert "claude = Claude (Anthropic, via Claude Code)" in a.prompts[0]
+    assert json.loads((out / "config.json").read_text(encoding="utf-8"))["names"] == {"codex": "Astra"}
+
+
+def test_default_display_names_are_generic():
+    assert all(name not in parley.DISPLAY[k] for k in parley.DISPLAY for name in ("Astra", "Fable", "4.7"))
