@@ -259,7 +259,9 @@ def validate_verdict(value: dict) -> dict:
 
 # ---------------------------------------------------------------- seats
 def parse_codex_events(stdout: str) -> tuple[str, str, str | None]:
-    """(agent text, joined reasoning, thread id) from `codex exec --json` output."""
+    """(agent text, joined reasoning, thread id) from `codex exec --json` output.
+    Raises RuntimeError with Codex's own message when the stream carries an error or failed turn,
+    so the ledger records why (wrong model for the account, quota, auth) instead of "no reply"."""
     reasoning, text, thread = [], "", None
     for line in stdout.splitlines():
         try:
@@ -268,6 +270,14 @@ def parse_codex_events(stdout: str) -> tuple[str, str, str | None]:
             continue
         if event.get("type") == "thread.started":
             thread = event.get("thread_id")
+        if event.get("type") in ("error", "turn.failed"):
+            message = event.get("message") or (event.get("error") or {}).get("message") or "unknown error"
+            try:  # Codex often nests a JSON error document in the message string
+                inner = json.loads(message)
+                message = (inner.get("error") or {}).get("message") or inner.get("message") or message
+            except (json.JSONDecodeError, AttributeError):
+                pass
+            raise RuntimeError(f"codex: {str(message)[:300]}")
         item = event.get("item") or {}
         if item.get("type") == "reasoning":
             reasoning.append(item.get("text", ""))

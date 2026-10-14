@@ -295,3 +295,20 @@ def test_names_reach_the_prompt_and_config(tmp_path):
 
 def test_default_display_names_are_generic():
     assert all(name not in parley.DISPLAY[k] for k in parley.DISPLAY for name in ("Astra", "Fable", "4.7"))
+
+
+# ---------------------------------------------------------------- codex stream parsing
+def test_parse_codex_events_surfaces_the_cli_error():
+    stream = ('{"type":"thread.started","thread_id":"abc"}\n{"type":"turn.started"}\n'
+              '{"type":"error","message":"{\\"type\\":\\"error\\",\\"status\\":400,\\"error\\":{\\"type\\":\\"invalid_request_error\\",'
+              '\\"message\\":\\"The model is not supported with this account.\\"}}"}\n')
+    with pytest.raises(RuntimeError, match="codex: The model is not supported with this account."):
+        parley.parse_codex_events(stream)
+
+
+def test_parse_codex_events_reads_text_reasoning_and_thread():
+    stream = ('{"type":"thread.started","thread_id":"abc"}\n'
+              '{"type":"item.completed","item":{"type":"reasoning","text":"thinking"}}\n'
+              '{"type":"item.completed","item":{"type":"agent_message","text":"{\\"message\\":\\"hi\\"}"}}\n'
+              '{"type":"turn.completed"}\n')
+    assert parley.parse_codex_events(stream) == ('{"message":"hi"}', "thinking", "abc")
