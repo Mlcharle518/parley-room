@@ -1,0 +1,17 @@
+{
+  "question": "An autonomous coding agent hits a permission check that no human is present to answer. Should its default be fail open (proceed and log) or fail closed (stop and wait)? Commit to ONE default for the general case, and name the single class of exception that justifies the other behaviour. The resolution must state both.",
+  "order": [
+    "claude",
+    "codex",
+    "grok"
+  ],
+  "max_turns": 9,
+  "verifier": "claude",
+  "names": {},
+  "thread": null,
+  "first": "codex",
+  "codex_seat": "fresh",
+  "claude_seat": "cli",
+  "grok_seat": "api",
+  "started": "2026-10-14T01:26:40.296135+00:00"
+}

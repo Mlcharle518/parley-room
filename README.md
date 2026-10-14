@@ -120,7 +120,13 @@ python parley.py outcome runs\<stamp> --status failed --note "falsifier observed
 Statuses: `held`, `failed`, `mixed`, `moot`. The ledger gets an `outcome` event next to the resolution and
 its falsifier.
 
-## Example run
+## Example runs
+
+[`runs/demo-fail-closed/20261014T012639Z/parley.md`](runs/demo-fail-closed/20261014T012639Z/parley.md) is the
+current house end to end, 2026-10-14: fresh Claude, fresh Codex (gpt-6-astra) and Grok 4.7 on "an unattended agent
+hits a permission check: fail open or fail closed, with the one exception". Claude opened, Codex tightened the
+exception, Grok sided with Codex, Claude conceded in turn 4; the tool-less Claude verifier confirmed the text
+answers the question and wrote the falsifier into `result.json`. Four turns, about two minutes.
 
 [`runs/llm-domain-v2/20260921T210807Z/parley.md`](runs/llm-domain-v2/20260921T210807Z/parley.md) is a real
 three-party parley from 2026-09-21: a Codex thread (gpt-6-astra), a live Claude Code session (Fable 5.1) and

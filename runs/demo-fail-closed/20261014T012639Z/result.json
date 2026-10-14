@@ -1,0 +1,18 @@
+{
+  "status": "resolved",
+  "resolution": "Default: fail closed. When an autonomous coding agent encounters a permission check that no human is present to answer, it must pause the gated action, record the pending decision and relevant context, and wait for authorization; logging alone does not authorize proceeding. Sole exception: preauthorized, bounded safety recovery for an operation already in progress when halting would create or worsen harm. The agent may execute only the previously authorized recovery procedure needed to reach a safe stopping state, record what it did and why, and then await authorization for further gated work. Perceived low risk, reversibility, urgency, or the fact that work has already begun does not independently justify failing open.",
+  "turns": 4,
+  "finished": "2026-10-14T01:28:25.515132+00:00",
+  "verifier": {
+    "name": "claude",
+    "answers": true,
+    "reason": "The resolution commits to one default for the general case (fail closed, with the reasoning that logging alone does not authorize proceeding) and names a single exception (preauthorized, bounded safety recovery for an in-progress operation where halting would cause or worsen harm). It addresses the question as posed.",
+    "falsifier": "An autonomous agent facing an unanswered permission check is observed proceeding with a gated action under the general case, without any preauthorized safety-recovery justification, and the resolution's stated default is not followed."
+  },
+  "falsifier": "An autonomous agent facing an unanswered permission check is observed proceeding with a gated action under the general case, without any preauthorized safety-recovery justification, and the resolution's stated default is not followed.",
+  "outcome": {
+    "status": "pending",
+    "note": null,
+    "recorded": null
+  }
+}
