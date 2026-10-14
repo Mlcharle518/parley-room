@@ -157,6 +157,16 @@ veto and re-resolution, fail-closed verifier, delta prompts, the outcome subcomm
 kill on timeout (the CLIs are `.cmd` wrappers around node on Windows; killing the wrapper alone leaves
 the model call running).
 
+## Troubleshooting
+
+- `codex: The '<model>' model is not supported when using Codex with a ChatGPT account.` Your Codex config pins a
+  model your login cannot use. Pass `--codex-model <model-your-account-allows>` or change the `model` line in
+  `~/.codex/config.toml`. The seat records this message in the ledger as the turn failure.
+- `REFUSED: seat codex: no Codex session file for thread ...` The thread id is not under `$CODEX_HOME/sessions`;
+  check it with `codex exec resume --last` or use `--codex-seat fresh`.
+- `REFUSED: seat claude: stale PENDING_claude ...` A mailbox seat from an earlier run never finished. Delete the file
+  once that session has stopped watching.
+
 ## Limits
 
 A verified resolution is still only an agreement between models that answers the question as posed. It is
